@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kafka Broker Disk Sizing Calculator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #0f1419;
+      --bg-secondary: #1a2332;
+      --bg-card: #1e2a3a;
+      --accent-blue: #3b82f6;
+      --accent-teal: #14b8a6;
+      --accent-amber: #f59e0b;
+      --accent-peach: #f97316;
+      --text-primary: #f1f5f9;
+      --text-muted: #94a3b8;
+      --border: rgba(148, 163, 184, 0.15);
+      --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body { height: 100%; }
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      background-image: 
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(59, 130, 246, 0.15), transparent),
+        radial-gradient(ellipse 60% 40% at 100% 100%, rgba(20, 184, 166, 0.08), transparent);
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0.75rem 1.25rem;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .top-row {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    header { text-align: center; }
+
+    .input-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 1rem;
+      justify-content: center;
+      align-items: flex-end;
+      padding: 0.75rem 1rem;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, var(--text-primary), var(--text-muted));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .subtitle { display: none; }
+
+    .input-group {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .input-group label {
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .input-group input {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1rem;
+      padding: 0.5rem 0.65rem;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-primary);
+      width: 70px;
+      transition: border-color 0.2s;
+    }
+
+    .input-group input:focus {
+      outline: none;
+      border-color: var(--accent-blue);
+    }
+
+    .input-hint { display: none; }
+
+    /* Main Content - 2 clusters side by side */
+    .main-content {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      flex: 1;
+      align-items: start;
+    }
+
+    /* Cluster - Layer stack (กล่องแบบแรก) */
+    .cluster-section {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem;
+      overflow: hidden;
+    }
+
+    .cluster-title {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 0.75rem;
+      text-align: center;
+    }
+
+    /* Layer 1: 3 Broker boxes */
+    .broker-section {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .brokers-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.6rem;
+    }
+
+    .broker-box {
+      min-height: 100px;
+      aspect-ratio: 3/2;
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 600;
+      font-size: 1.2rem;
+      border: 1px solid var(--border);
+      position: relative;
+      z-index: 2;
+    }
+
+    .broker-box .label {
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.95rem;
+      font-weight: 500;
+      opacity: 0.9;
+      margin-bottom: 0.35rem;
+    }
+
+    .broker-box .value { font-size: 1.4rem; }
+
+    .broker-section.left .broker-box {
+      background: linear-gradient(145deg, #1e3a5f 0%, #0f2744 100%);
+      color: #93c5fd;
+    }
+
+    .broker-section.right .broker-box {
+      background: linear-gradient(145deg, #3d2a1a 0%, #2a1f14 100%);
+      color: #fdba74;
+    }
+
+    /* Layer 2: Portworx bar (ยาว cross 3 กล่อง) */
+    .portworx-bar {
+      margin-top: 0.5rem;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      text-align: center;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.1rem;
+      font-weight: 500;
+      border: 1px solid var(--border);
+      background: linear-gradient(135deg, #422006 0%, #78350f 100%);
+      color: #fcd34d;
+    }
+
+    /* Layer 3: Total Usage */
+    .total-usage-box {
+      margin-top: 0.5rem;
+      padding: 0.85rem 1rem;
+      border-radius: 8px;
+      text-align: center;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.15rem;
+      font-weight: 600;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      color: var(--accent-teal);
+    }
+
+    .total-usage-box .label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-bottom: 0.25rem;
+    }
+
+    /* Layer 4: Pure Flash Array */
+    .storage-site-card {
+      margin-top: 0.5rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+    }
+
+    .storage-site-card .storage-site-label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 0.35rem;
+    }
+
+    .storage-site-card .storage-site-detail {
+      font-size: 1rem;
+    }
+
+    .storage-site-card .remain {
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--accent-teal);
+    }
+
+    .storage-site-card .storage-site-detail.over .remain,
+    .storage-site-card .storage-site-detail.over .remain-pct {
+      color: #f87171;
+    }
+
+    .storage-capacity-bar {
+      margin-top: 0.5rem;
+      padding: 0.6rem 0.85rem;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.95rem;
+      color: var(--text-muted);
+    }
+
+    .storage-capacity-bar input {
+      font-family: 'JetBrains Mono', monospace;
+      padding: 0.35rem 0.5rem;
+      font-size: 0.95rem;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text-primary);
+      width: 60px;
+      margin: 0 0.25rem;
+    }
+
+    /* Formula + Result - วางด้านล่าง */
+    .formula-section {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+      margin-top: 0.5rem;
+    }
+
+    .formula-section-title {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 0.35rem;
+    }
+
+    .formula-summary {
+      font-size: 0.95rem;
+      color: var(--accent-teal);
+      margin-bottom: 0.75rem;
+    }
+
+    .formula-summary strong {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .formula-steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 0.5rem 1.5rem;
+    }
+
+    .formula-step {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0.35rem 0.5rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9rem;
+    }
+
+    .formula-step .step-num { color: var(--accent-teal); font-weight: 600; flex-shrink: 0; }
+    .formula-step .formula-text { color: var(--text-muted); }
+    .formula-step .formula-expr { color: var(--text-primary); word-break: break-word; }
+    .formula-step .result { color: var(--accent-teal); font-weight: 600; }
+    .formula-divider { grid-column: 1 / -1; height: 1px; background: var(--border); margin: 0.25rem 0; }
+
+    @media (max-width: 900px) {
+      .main-content { grid-template-columns: 1fr; }
+      .input-row { flex-direction: column; align-items: stretch; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="top-row">
+      <header>
+        <h1>Kafka Broker Disk Sizing Calculator</h1>
+      </header>
+      <div class="input-row">
+        <div class="input-group">
+          <label>Throughput (MB/s)</label>
+          <input type="number" id="throughput" placeholder="100" min="0" step="0.1" value="100">
+        </div>
+        <div class="input-group">
+          <label>Retention (วัน)</label>
+          <input type="number" id="retention" placeholder="7" min="0" step="0.5" value="7">
+        </div>
+        <div class="input-group">
+          <label>Kafka RF</label>
+          <input type="number" id="kafkaReplicationFactor" placeholder="4" min="1" max="10" step="1" value="4">
+        </div>
+        <div class="input-group">
+          <label>Sites</label>
+          <input type="number" id="siteCount" placeholder="2" min="1" max="10" step="1" value="2">
+        </div>
+        <div class="input-group">
+          <label>Portworx Replica</label>
+          <input type="number" id="portworxReplica" placeholder="3" min="1" max="10" step="1" value="3">
+        </div>
+        <div class="input-group">
+          <label>Brokers (ต่อฝั่ง)</label>
+          <input type="number" id="brokerCount" placeholder="3" min="1" max="10" step="1" value="3">
+        </div>
+        <div class="input-group">
+          <label>Overhead (%)</label>
+          <input type="number" id="overhead" placeholder="20" min="0" max="100" step="1" value="20">
+        </div>
+        <div class="input-group">
+          <label>Site ละ (TB)</label>
+          <input type="number" id="arrayCapacity" placeholder="100" value="100" min="1">
+        </div>
+      </div>
+    </div>
+
+    <div class="main-content">
+      <div class="cluster-section">
+        <div class="cluster-title">Cluster A — Site A</div>
+        <div class="broker-section left">
+          <div class="brokers-row" id="brokersLeft"></div>
+          <div class="portworx-bar">Portworx Replica = <span class="replica-value" id="portworxLeft">3</span></div>
+          <div class="total-usage-box">
+            <div class="label">Total Usage</div>
+            <span id="totalLeft">0 GB</span>
+          </div>
+          <div class="storage-site-card">
+            <div class="storage-site-label">Pure Flash Array — <span id="capacityLabelA">100</span> TB Usable</div>
+            <div class="storage-site-detail" id="remainBlockA">
+              Remain: <strong class="remain" id="remainLeft">0 TB</strong> (<span class="remain-pct" id="remainPercentLeft">0</span>%)
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="cluster-section">
+        <div class="cluster-title">Cluster B — Site B</div>
+        <div class="broker-section right">
+          <div class="brokers-row" id="brokersRight"></div>
+          <div class="portworx-bar">Portworx Replica = <span class="replica-value" id="portworxRight">3</span></div>
+          <div class="total-usage-box">
+            <div class="label">Total Usage</div>
+            <span id="totalRight">0 GB</span>
+          </div>
+          <div class="storage-site-card">
+            <div class="storage-site-label">Pure Flash Array — <span id="capacityLabelB">100</span> TB Usable</div>
+            <div class="storage-site-detail" id="remainBlockB">
+              Remain: <strong class="remain" id="remainRight">0 TB</strong> (<span class="remain-pct" id="remainPercentRight">0</span>%)
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="formula-section">
+      <div class="formula-section-title">สูตรการคำนวณ + Result</div>
+      <div class="formula-summary">Disk ต่อ Broker: <strong id="perBroker">0 GB</strong> &nbsp;|&nbsp; Total ทั้งสอง Cluster: <strong id="totalBoth">0 GB</strong></div>
+      <div class="formula-steps" id="formulaSteps"></div>
+    </div>
+  </div>
+
+  <script>
+    const throughputInput = document.getElementById('throughput');
+    const retentionInput = document.getElementById('retention');
+    const kafkaReplicationFactorInput = document.getElementById('kafkaReplicationFactor');
+    const siteCountInput = document.getElementById('siteCount');
+    const portworxReplicaInput = document.getElementById('portworxReplica');
+    const brokerCountInput = document.getElementById('brokerCount');
+    const overheadInput = document.getElementById('overhead');
+    const arrayCapacityInput = document.getElementById('arrayCapacity');
+
+    const brokersLeft = document.getElementById('brokersLeft');
+    const brokersRight = document.getElementById('brokersRight');
+    const portworxLeft = document.getElementById('portworxLeft');
+    const portworxRight = document.getElementById('portworxRight');
+
+    const perBrokerEl = document.getElementById('perBroker');
+    const totalLeftEl = document.getElementById('totalLeft');
+    const totalRightEl = document.getElementById('totalRight');
+    const totalBothEl = document.getElementById('totalBoth');
+    const remainLeftEl = document.getElementById('remainLeft');
+    const remainRightEl = document.getElementById('remainRight');
+    const remainPercentLeftEl = document.getElementById('remainPercentLeft');
+    const remainPercentRightEl = document.getElementById('remainPercentRight');
+
+    function formatSize(bytes) {
+      if (bytes >= 1e12) return (bytes / 1e12).toFixed(2) + ' TB';
+      if (bytes >= 1e9) return (bytes / 1e9).toFixed(2) + ' GB';
+      if (bytes >= 1e6) return (bytes / 1e6).toFixed(2) + ' MB';
+      return bytes.toFixed(2) + ' B';
+    }
+
+    function createBrokerBox(value, index, isLeft) {
+      const div = document.createElement('div');
+      div.className = 'broker-box';
+      div.innerHTML = `
+        <span class="label">Broker ${index + 1}</span>
+        <span class="value">${value}</span>
+      `;
+      return div;
+    }
+
+    function formatNum(n, unit) {
+      if (unit === 'MB') {
+        if (n >= 1e6) return (n / 1e6).toFixed(2) + ' TB';
+        if (n >= 1e3) return (n / 1e3).toFixed(2) + ' GB';
+        return n.toLocaleString('en-US', { maximumFractionDigits: 0 }) + ' MB';
+      }
+      if (n >= 1e12) return (n / 1e12).toFixed(2) + ' TB';
+      if (n >= 1e9) return (n / 1e9).toFixed(2) + ' GB';
+      if (n >= 1e6) return (n / 1e6).toFixed(2) + ' MB';
+      return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    }
+
+    function renderFormula(v) {
+      const steps = document.getElementById('formulaSteps');
+      const rawMB = v.throughput * v.retention * 24 * 3600;
+      const replicaPerSite = v.kafkaReplicationFactor / v.siteCount;
+      const dataPerSiteMB = rawMB * replicaPerSite;
+      const dataPerSiteBytes = dataPerSiteMB * 1024 * 1024;
+      const basePerBroker = dataPerSiteBytes / v.brokerCount;
+      const perBrokerBytes = basePerBroker * v.overheadMultiplier;
+      const totalPerSiteBytes = perBrokerBytes * v.brokerCount * v.portworxReplica;
+
+      steps.innerHTML = `
+        <div class="formula-step">
+          <span class="step-num">1.</span>
+          <span class="formula-text">Raw Data =</span>
+          <span class="formula-expr">Throughput × Retention × 24 × 3600</span>
+          <span class="result">= ${formatNum(rawMB, 'MB')}</span>
+        </div>
+        <div class="formula-step">
+          <span class="step-num">2.</span>
+          <span class="formula-text">Replica ต่อ Site =</span>
+          <span class="formula-expr">RF ÷ Sites = ${v.kafkaReplicationFactor} ÷ ${v.siteCount}</span>
+          <span class="result">= ${replicaPerSite}</span>
+        </div>
+        <div class="formula-step">
+          <span class="step-num">3.</span>
+          <span class="formula-text">Data ต่อ Site =</span>
+          <span class="formula-expr">Raw × Replica ต่อ Site = ${formatNum(rawMB, 'MB')} × ${replicaPerSite}</span>
+          <span class="result">= ${formatNum(dataPerSiteMB, 'MB')}</span>
+        </div>
+        <div class="formula-step">
+          <span class="step-num">4.</span>
+          <span class="formula-text">Disk ต่อ Broker =</span>
+          <span class="formula-expr">(Data ต่อ Site ÷ Brokers) × (1 + Overhead%) = (${formatNum(dataPerSiteMB, 'MB')} ÷ ${v.brokerCount}) × ${v.overheadMultiplier.toFixed(2)}</span>
+          <span class="result">= ${formatSize(perBrokerBytes)}</span>
+        </div>
+        <div class="formula-divider"></div>
+        <div class="formula-step">
+          <span class="step-num">5.</span>
+          <span class="formula-text">Total Usage ต่อ Site =</span>
+          <span class="formula-expr">Disk ต่อ Broker × Brokers × Portworx = ${formatSize(perBrokerBytes)} × ${v.brokerCount} × ${v.portworxReplica}</span>
+          <span class="result">= ${formatSize(totalPerSiteBytes)}</span>
+        </div>
+      `;
+    }
+
+    function renderBrokers() {
+      const throughput = parseFloat(throughputInput.value) || 0;
+      const retention = parseFloat(retentionInput.value) || 0;
+      const kafkaReplicationFactor = parseInt(kafkaReplicationFactorInput.value) || 1;
+      const siteCount = parseInt(siteCountInput.value) || 1;
+      const portworxReplica = parseInt(portworxReplicaInput.value) || 1;
+      const brokerCount = parseInt(brokerCountInput.value) || 3;
+      const overhead = parseFloat(overheadInput.value) || 0;
+      const arrayCapacityTB = parseFloat(arrayCapacityInput.value) || 100;
+      const overheadMultiplier = 1 + overhead / 100;
+
+      // สูตร: Kafka RF เป็นภาพรวม → หารแต่ละ Site (RF=4, 2 Sites → 2/2 ต่อ Site)
+      // Per Site = Raw × (RF ÷ Sites), Per Broker = Per Site ÷ Brokers
+      const rawDataMB = throughput * retention * 24 * 3600;
+      const replicaPerSite = kafkaReplicationFactor / siteCount;
+      const dataPerSiteMB = rawDataMB * replicaPerSite;
+      const totalDataMB = dataPerSiteMB * siteCount; // = rawDataMB * kafkaReplicationFactor
+      // Disk ต่อ Broker = ข้อมูลต่อ Site ÷ จำนวน Brokers ต่อ Site (รวม Overhead)
+      const dataPerSiteBytes = dataPerSiteMB * 1024 * 1024;
+      const perBrokerBytes = (dataPerSiteBytes / brokerCount) * overheadMultiplier;
+
+      // Total Usage ต่อ Cluster (รวม Portworx Replica)
+      const totalPerClusterBytes = perBrokerBytes * brokerCount * portworxReplica;
+
+      // อัปเดต Broker boxes
+      const perBrokerFormatted = formatSize(perBrokerBytes);
+
+      brokersLeft.innerHTML = '';
+      brokersRight.innerHTML = '';
+
+      for (let i = 0; i < brokerCount; i++) {
+        brokersLeft.appendChild(createBrokerBox(perBrokerFormatted, i, true));
+        brokersRight.appendChild(createBrokerBox(perBrokerFormatted, i, false));
+      }
+
+      portworxLeft.textContent = portworxReplica;
+      portworxRight.textContent = portworxReplica;
+
+      renderFormula({
+        throughput, retention, kafkaReplicationFactor, siteCount,
+        brokerCount, portworxReplica, overheadMultiplier
+      });
+
+      perBrokerEl.textContent = formatSize(perBrokerBytes);
+      totalLeftEl.textContent = formatSize(totalPerClusterBytes);
+      totalRightEl.textContent = formatSize(totalPerClusterBytes);
+      totalBothEl.textContent = formatSize(totalPerClusterBytes * siteCount);
+
+      document.getElementById('capacityLabelA').textContent = arrayCapacityTB;
+      document.getElementById('capacityLabelB').textContent = arrayCapacityTB;
+
+      // แต่ละ Site มี Pure Flash Array แยกกัน — Remain ต่อ Site (ติดลบถ้า Over)
+      const totalPerClusterTB = totalPerClusterBytes / 1e12;
+      const remainPerSiteTB = arrayCapacityTB - totalPerClusterTB;
+      const remainPercentPerSite = arrayCapacityTB > 0 
+        ? ((remainPerSiteTB / arrayCapacityTB) * 100).toFixed(1) 
+        : 0;
+
+      const remainText = remainPerSiteTB.toFixed(2) + ' TB';
+      const percentText = remainPercentPerSite + '%';
+      remainLeftEl.textContent = remainText;
+      remainRightEl.textContent = remainText;
+      remainPercentLeftEl.textContent = percentText;
+      const isOver = remainPerSiteTB < 0;
+      document.getElementById('remainBlockA').classList.toggle('over', isOver);
+      document.getElementById('remainBlockB').classList.toggle('over', isOver);
+      remainPercentRightEl.textContent = remainPercentPerSite + '%';
+    }
+
+    const inputs = [
+      throughputInput,
+      retentionInput,
+      kafkaReplicationFactorInput,
+      siteCountInput,
+      portworxReplicaInput,
+      brokerCountInput,
+      overheadInput,
+      arrayCapacityInput
+    ];
+
+    inputs.forEach(input => {
+      input.addEventListener('input', renderBrokers);
+      input.addEventListener('change', renderBrokers);
+    });
+
+    renderBrokers();
+  </script>
+</body>
+</html>
